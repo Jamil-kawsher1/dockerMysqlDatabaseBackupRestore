@@ -1,5 +1,6 @@
 const { execSync } = require("child_process");
 const fs = require("fs");
+const path = require("path");
 const readline = require("readline");
 
 const rl = readline.createInterface({
@@ -13,11 +14,18 @@ function ask(question) {
 
 async function restoreDatabase() {
   try {
-    const containers = execSync('docker ps --format "{{.Names}}"')
+    // Get running Docker containers
+    const containersRaw = execSync('docker ps --format "{{.Names}}"')
       .toString()
-      .trim()
-      .split("\n");
+      .trim();
 
+    if (!containersRaw) {
+      console.error("❌ No running Docker containers found.");
+      rl.close();
+      return;
+    }
+
+    const containers = containersRaw.split("\n");
     console.log("\n📦 Available Docker Containers:");
     containers.forEach((name, i) => console.log(`${i + 1}. ${name}`));
 
@@ -40,24 +48,57 @@ async function restoreDatabase() {
     const password =
       (await ask("🔐 Enter DB password (default: admin): ")) || "admin";
 
-    if (!fs.existsSync("backup.sql")) {
-      console.error("\n❌ backup.sql not found!");
-    } else {
-      console.log(
-        `\n📁 Found backup.sql — preparing to restore into '${database}'`
-      );
+    // Read backup directory
+    const backupDir = path.join(__dirname, "backup");
 
-      // Step 1: Create the database if it doesn't exist
-      const createCmd = `docker exec ${container} mysql -u ${username} --password=${password} -e "CREATE DATABASE IF NOT EXISTS \\\`${database}\\\`;"`;
-      execSync(createCmd);
-      console.log(`✅ Database '${database}' ensured.`);
-
-      // Step 2: Restore the dump
-      const sql = fs.readFileSync("backup.sql");
-      const restoreCmd = `docker exec -i ${container} /usr/bin/mysql -u ${username} --password=${password} ${database}`;
-      execSync(restoreCmd, { input: sql });
-      console.log("\n✅ Restore completed from backup.sql");
+    if (!fs.existsSync(backupDir)) {
+      console.error("❌ Backup folder '/backup' does not exist.");
+      rl.close();
+      return;
     }
+
+    const sqlFiles = fs
+      .readdirSync(backupDir)
+      .filter((file) => file.endsWith(".sql"));
+
+    if (sqlFiles.length === 0) {
+      console.error("❌ No .sql files found in /backup directory.");
+      rl.close();
+      return;
+    }
+
+    console.log("\n📁 Available Backup Files in /backup:");
+    sqlFiles.forEach((file, i) => console.log(`${i + 1}. ${file}`));
+
+    const selectedFileIndex = await ask("\n📄 Select file number to restore: ");
+    const selectedFile = sqlFiles[parseInt(selectedFileIndex) - 1];
+
+    if (!selectedFile) {
+      console.error("❌ Invalid file selection.");
+      rl.close();
+      return;
+    }
+
+    const fullPath = path.join(backupDir, selectedFile);
+    console.log(
+      `\n📁 Found ${selectedFile} — preparing to restore into '${database}'`
+    );
+
+    // Step 1: Create the database if it doesn't exist
+    const createCmd =
+      `docker exec ${container} mysql -u ${username} --password=${password} -e "CREATE DATABASE IF NOT EXISTS \\\`${database}\\\`;"`.replace(
+        /\\`/g,
+        "`"
+      );
+    execSync(createCmd);
+    console.log(`✅ Database '${database}' ensured.`);
+
+    // Step 2: Restore the dump
+    const sql = fs.readFileSync(fullPath);
+    const restoreCmd = `docker exec -i ${container} /usr/bin/mysql -u ${username} --password=${password} ${database}`;
+    execSync(restoreCmd, { input: sql });
+
+    console.log(`\n✅ Restore completed from ${selectedFile}`);
   } catch (err) {
     console.error("\n❌ Error:", err.message);
   } finally {
