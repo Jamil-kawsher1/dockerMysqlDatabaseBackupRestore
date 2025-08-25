@@ -18,24 +18,44 @@ async function restoreDatabase() {
       .trim()
       .split("\n");
 
-    console.log("\nAvailable Docker Containers:");
+    console.log("\n📦 Available Docker Containers:");
     containers.forEach((name, i) => console.log(`${i + 1}. ${name}`));
 
-    const containerIndex = await ask("\nSelect container number: ");
+    const containerIndex = await ask("\n🔢 Select container number: ");
     const container = containers[parseInt(containerIndex) - 1];
 
-    const database = await ask("Enter database name: ");
+    if (!container) {
+      console.error("❌ Invalid container selection.");
+      rl.close();
+      return;
+    }
+
+    const defaultDbName = container;
+    const database =
+      (await ask(`🗃️ Enter database name (default: ${defaultDbName}): `)) ||
+      defaultDbName;
+
     const username =
-      (await ask("Enter DB username (default: root): ")) || "root";
+      (await ask("👤 Enter DB username (default: root): ")) || "root";
     const password =
-      (await ask("Enter DB password (default: anin): ")) || "anin";
+      (await ask("🔐 Enter DB password (default: admin): ")) || "admin";
 
     if (!fs.existsSync("backup.sql")) {
       console.error("\n❌ backup.sql not found!");
     } else {
+      console.log(
+        `\n📁 Found backup.sql — preparing to restore into '${database}'`
+      );
+
+      // Step 1: Create the database if it doesn't exist
+      const createCmd = `docker exec ${container} mysql -u ${username} --password=${password} -e "CREATE DATABASE IF NOT EXISTS \\\`${database}\\\`;"`;
+      execSync(createCmd);
+      console.log(`✅ Database '${database}' ensured.`);
+
+      // Step 2: Restore the dump
       const sql = fs.readFileSync("backup.sql");
-      const cmd = `docker exec -i ${container} /usr/bin/mysql -u ${username} --password=${password} ${database}`;
-      execSync(cmd, { input: sql });
+      const restoreCmd = `docker exec -i ${container} /usr/bin/mysql -u ${username} --password=${password} ${database}`;
+      execSync(restoreCmd, { input: sql });
       console.log("\n✅ Restore completed from backup.sql");
     }
   } catch (err) {
